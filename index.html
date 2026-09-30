@@ -42,7 +42,7 @@ footer{margin-top:3rem;color:var(--muted);font-size:.85rem}
 <span class="id">io.github.ykedutech2004/actuator-safety</span>
 
 <dl class="meta">
-<dt>Version</dt><dd>0.1 (draft)</dd>
+<dt>Version</dt><dd>0.1 (draft) — page revised 2026-10-01 (stop endpoint, device fail-safe)</dd>
 <dt>Base protocol</dt><dd>Model Context Protocol <code>2026-07-28</code>, stateless Streamable HTTP</dd>
 <dt>Mechanism</dt><dd><code>capabilities.extensions</code> (SEP-2133), vendor prefix = reversed domain of <code>ykedutech2004.github.io</code></dd>
 <dt>Status</dt><dd>Research prototype for a master's thesis. Not an official MCP extension.</dd>
@@ -86,6 +86,7 @@ This page specifies a research-prototype extension. It is not endorsed by the MC
 <tr><td>E8</td><td>Safety state resource</td><td><code>resource://smartfarm/safety</code>: lockout 여부, cooldown 잔여, 유효 토큰 수</td></tr>
 </table></div>
 <p>기본 안전(모든 서버에 공통): 입력 범위 검증(<code>duration_ms</code> 100–5000 → <code>-32602</code>), 펌프 사용 중 거부, 요청 시간 + 100 ms 초과 시 hard cutoff, 표준 헤더(<code>Mcp-Method</code>, <code>Mcp-Name</code>) 검증. 이 확장은 이 기본 안전 위에 추가됩니다.</p>
+<p>장치 fail-safe(모든 서버에 공통, 2026-10-01 추가): 하드웨어 타이머 인터럽트(10 ms)가 액추에이터 출력을 직접 감시합니다. 제어 task의 heartbeat가 250 ms 넘게 끊기거나 작동이 요청 시간 + 200 ms를 넘으면 출력을 강제로 끄고 재부팅 전까지 잠급니다. 제어 task는 task watchdog에 등록되어, 멈추면 칩이 재부팅됩니다.</p>
 
 <h2>4. 도구 / Tools</h2>
 <h3>irrigation_prepare</h3>
@@ -105,7 +106,13 @@ result.structuredContent: {
   "reason_code": 0, "sensor_age_ms": 21
 }</code></pre>
 <h3>irrigation_stop</h3>
-<pre><code>arguments: { "job_id": "job-001" }  →  outcome: STOPPED | ALREADY_STOPPED | JOB_MISMATCH</code></pre>
+<pre><code>arguments: { "job_id": "job-001" }
+result.structuredContent: {
+  "job_id": "job-001", "outcome": "STOPPED",   // | ALREADY_STOPPED | JOB_MISMATCH
+  "pump_state": "OFF", "pump_runtime_ms": 1350
+}
+// 정지된 irrigation_run은 outcome "STOPPED"(isError: false)를 반환</code></pre>
+<p><code>irrigation_run</code>은 작동이 끝날 때까지 응답을 보류합니다. 그래서 참조 구현은 <strong>제어 전용 endpoint</strong> <code>http://&lt;device&gt;:81/mcp</code>를 따로 둡니다. 이 endpoint는 <code>irrigation_stop</code>과 <code>resources/read</code>만 받고, 그 밖의 요청에는 <code>-32601</code>을 반환합니다. 작동 중인 <code>job_id</code>는 <code>resource://smartfarm/pump</code>에서 확인합니다.</p>
 <p>안전 거부는 JSON-RPC 오류가 아니라 정상 tool 결과(<code>isError: true</code> + <code>outcome</code>)로 반환합니다. 형식 오류만 JSON-RPC 오류(<code>-32602</code>, <code>-32020</code> 등)로 반환합니다.</p>
 
 <h2>5. 거부 사유 코드 / Reason codes</h2>
@@ -131,6 +138,8 @@ result.structuredContent: {
 <h2>7. 알려진 한계 / Known limitations</h2>
 <ul>
 <li>2단계 승인은 관수 1건당 HTTP 왕복을 1회 늘립니다. 네트워크 지연이 TTL을 넘으면 정상 명령도 만료로 거부될 수 있습니다(안전성과 가용성의 트레이드오프).</li>
+<li>정지 명령도 네트워크를 거치므로, 네트워크 지연이 크면 작동이 끝난 뒤 도착할 수 있습니다. 작동 시간의 상한은 네트워크가 아니라 장치 측 hard cutoff와 fail-safe가 보장합니다.</li>
+<li>fail-safe는 제어 신호(GPIO) 수준입니다. 실제 설비에서는 액추에이터 드라이버를 전원 차단 시 OFF 상태가 되도록(기본 OFF) 배선해야 합니다.</li>
 <li>인증·암호화(토큰 서명, TLS)는 범위 밖입니다. 폐쇄 LAN 시험 환경을 전제로 합니다.</li>
 <li>정책값(TTL, freshness, cooldown)은 연구용 값이며 실제 농업 현장에 맞춘 값이 아닙니다.</li>
 </ul>
