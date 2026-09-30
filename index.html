@@ -1,1 +1,148 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Actuator Safety Extension for MCP</title>
+<meta name="description" content="io.github.ykedutech2004/actuator-safety — research-prototype MCP extension for physical actuator safety on microcontrollers.">
+<style>
+:root{--bg:#fbfbf9;--fg:#1d1f21;--muted:#5b6166;--line:#dcdfe2;--card:#ffffff;--accent:#1f6f5c;--code:#f1f3f2;--warn:#8a5a00;--warnbg:#fff6e0}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#141617;--fg:#e6e8e9;--muted:#a3aaaf;--line:#2d3235;--card:#1b1e20;--accent:#5fc3a6;--code:#22272a;--warn:#f0c060;--warnbg:#2a2415}}
+:root[data-theme="dark"]{--bg:#141617;--fg:#e6e8e9;--muted:#a3aaaf;--line:#2d3235;--card:#1b1e20;--accent:#5fc3a6;--code:#22272a;--warn:#f0c060;--warnbg:#2a2415}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.65 system-ui,-apple-system,"Segoe UI","Apple SD Gothic Neo","Malgun Gothic",sans-serif}
+main{max-width:860px;margin:0 auto;padding:40px 16px 80px}
+h1{font-size:1.9rem;line-height:1.25;margin:0 0 .3rem}
+h2{font-size:1.25rem;margin:2.4rem 0 .8rem;padding-top:.4rem;border-top:1px solid var(--line)}
+h3{font-size:1.05rem;margin:1.6rem 0 .5rem}
+p,li{color:var(--fg)}
+.sub{color:var(--muted);margin:0 0 1.2rem}
+.id{display:inline-block;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--code);border:1px solid var(--line);border-radius:6px;padding:.35rem .6rem;font-size:.95rem;word-break:break-all}
+.note{background:var(--warnbg);border-left:4px solid var(--warn);padding:.8rem 1rem;border-radius:6px;margin:1.2rem 0}
+code,pre{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.88rem}
+code{background:var(--code);padding:.08rem .3rem;border-radius:4px}
+pre{background:var(--code);border:1px solid var(--line);border-radius:8px;padding:.9rem 1rem;overflow-x:auto;line-height:1.5}
+pre code{background:none;padding:0}
+.tbl{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+table{border-collapse:collapse;width:100%;min-width:560px;font-size:.92rem}
+th,td{text-align:left;padding:.55rem .7rem;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--code);font-weight:600}
+tr:last-child td{border-bottom:none}
+a{color:var(--accent)}
+.meta{display:grid;grid-template-columns:max-content 1fr;gap:.25rem 1rem;font-size:.93rem;margin:1rem 0}
+.meta dt{color:var(--muted)}
+.meta dd{margin:0}
+footer{margin-top:3rem;color:var(--muted);font-size:.85rem}
+</style>
+</head>
+<body>
+<main>
+<h1>Actuator Safety Extension for MCP</h1>
+<p class="sub">물리 액추에이터 안전 확장 — 자원 제약 MCU용 MCP 확장 (연구 프로토타입)</p>
+<span class="id">io.github.ykedutech2004/actuator-safety</span>
 
+<dl class="meta">
+<dt>Version</dt><dd>0.1 (draft)</dd>
+<dt>Base protocol</dt><dd>Model Context Protocol <code>2026-07-28</code>, stateless Streamable HTTP</dd>
+<dt>Mechanism</dt><dd><code>capabilities.extensions</code> (SEP-2133), vendor prefix = reversed domain of <code>ykedutech2004.github.io</code></dd>
+<dt>Status</dt><dd>Research prototype for a master's thesis. Not an official MCP extension.</dd>
+</dl>
+
+<div class="note">
+이 문서는 석사 학위논문 연구용 프로토타입의 확장 명세입니다. MCP 공식 확장이 아니며, 안전 인증된 제품 규격이 아닙니다. 필드와 동작은 연구 진행에 따라 바뀔 수 있습니다.<br>
+This page specifies a research-prototype extension. It is not endorsed by the MCP project and is not a certified safety standard.
+</div>
+
+<h2>1. 목적 / Purpose</h2>
+<p>표준 MCP의 <code>tools/call</code>은 요청을 받으면 곧바로 실행합니다. 물리 액추에이터(예: 관수 펌프)에서는 재전송된 명령, 지연된 명령, 오래된 센서값, 연속 실행, 장애 직후 실행이 실제 위험이 됩니다. 이 확장은 MCP 메시지 형식을 유지하면서, 서버(MCU)가 직접 강제하는 안전 필드와 규칙을 추가합니다.</p>
+<p>A standard <code>tools/call</code> executes immediately. For physical actuators, retransmitted, delayed, stale-input, back-to-back and post-fault commands are real hazards. This extension keeps MCP wire format and adds safety fields and rules that the device itself enforces.</p>
+
+<h2>2. 기능 공개 / Capability advertisement</h2>
+<p>서버는 <code>server/discover</code> 결과의 <code>capabilities.extensions</code>에 정책값을 공개합니다. 클라이언트는 이 값을 보고 호출 흐름을 정합니다.</p>
+<pre><code>"capabilities": {
+  "tools": {}, "resources": {},
+  "extensions": {
+    "io.github.ykedutech2004/actuator-safety": {
+      "version": "0.1",
+      "approval_ttl_ms": 2000,
+      "sensor_freshness_ms": 500,
+      "cooldown_ms": 10000,
+      "max_duration_ms": 5000,
+      "fault_lockout": true
+    }
+  }
+}</code></pre>
+
+<h2>3. 안전 규칙 / Safety rules (E1–E8)</h2>
+<div class="tbl"><table>
+<tr><th>ID</th><th>규칙</th><th>서버 동작</th></tr>
+<tr><td>E1</td><td>Command identifier (idempotency)</td><td><code>command_id</code>(1–16자)를 일정 시간 보관하고, 같은 ID의 재요청은 실행하지 않고 <code>REJECTED_DUPLICATE</code>로 응답</td></tr>
+<tr><td>E2</td><td>Two-phase approval with TTL</td><td><code>irrigation_prepare</code>가 1회용 <code>approval_token</code>을 발급하고, <code>irrigation_run</code>은 유효한 토큰으로만 실행. TTL은 서버 시계 기준(시계 동기화 불필요). 만료·재사용 토큰 거부</td></tr>
+<tr><td>E3</td><td>Sensor freshness</td><td>판단에 쓴 센서 표본이 <code>sensor_freshness_ms</code>보다 오래되면 <code>REJECTED_STALE_SENSOR</code></td></tr>
+<tr><td>E4</td><td>Cooldown interlock</td><td>직전 작동 종료 후 <code>cooldown_ms</code> 안의 요청은 <code>REJECTED_COOLDOWN</code></td></tr>
+<tr><td>E5</td><td>Fault lockout</td><td>hard cutoff 등 작동 장애가 나면 lockout. 해제 전 모든 실행 요청은 <code>REJECTED_LOCKOUT</code></td></tr>
+<tr><td>E6</td><td>Capability advertisement</td><td>§2의 정책값 공개</td></tr>
+<tr><td>E7</td><td>Structured reason codes</td><td>거부 시 <code>structuredContent</code>에 <code>outcome</code>, <code>reason_code</code>, 관련 수치(<code>sensor_age_ms</code>, <code>cooldown_remaining_ms</code>)를 포함</td></tr>
+<tr><td>E8</td><td>Safety state resource</td><td><code>resource://smartfarm/safety</code>: lockout 여부, cooldown 잔여, 유효 토큰 수</td></tr>
+</table></div>
+<p>기본 안전(모든 서버에 공통): 입력 범위 검증(<code>duration_ms</code> 100–5000 → <code>-32602</code>), 펌프 사용 중 거부, 요청 시간 + 100 ms 초과 시 hard cutoff, 표준 헤더(<code>Mcp-Method</code>, <code>Mcp-Name</code>) 검증. 이 확장은 이 기본 안전 위에 추가됩니다.</p>
+
+<h2>4. 도구 / Tools</h2>
+<h3>irrigation_prepare</h3>
+<pre><code>arguments: { "duration_ms": 100..5000 }
+result.structuredContent: {
+  "outcome": "APPROVED",
+  "approval_token": "3f9a0c21",
+  "expires_in_ms": 2000,
+  "duration_ms": 1000
+}
+// lockout / cooldown 중이면 발급하지 않고 해당 outcome으로 응답</code></pre>
+<h3>irrigation_run</h3>
+<pre><code>arguments: { "approval_token": "3f9a0c21", "command_id": "job-001" }
+result.structuredContent: {
+  "job_id": "job-001", "outcome": "EXECUTED",
+  "duration_ms": 1000, "moisture_pct": 25, "pump_state": "OFF",
+  "reason_code": 0, "sensor_age_ms": 21
+}</code></pre>
+<h3>irrigation_stop</h3>
+<pre><code>arguments: { "job_id": "job-001" }  →  outcome: STOPPED | ALREADY_STOPPED | JOB_MISMATCH</code></pre>
+<p>안전 거부는 JSON-RPC 오류가 아니라 정상 tool 결과(<code>isError: true</code> + <code>outcome</code>)로 반환합니다. 형식 오류만 JSON-RPC 오류(<code>-32602</code>, <code>-32020</code> 등)로 반환합니다.</p>
+
+<h2>5. 거부 사유 코드 / Reason codes</h2>
+<div class="tbl"><table>
+<tr><th>reason_code</th><th>outcome</th></tr>
+<tr><td>0</td><td>EXECUTED / NOT_REQUIRED (거부 아님)</td></tr>
+<tr><td>1001</td><td>REJECTED_DUPLICATE</td></tr>
+<tr><td>1002</td><td>REJECTED_APPROVAL_EXPIRED</td></tr>
+<tr><td>1003</td><td>REJECTED_APPROVAL_INVALID</td></tr>
+<tr><td>1004</td><td>REJECTED_STALE_SENSOR</td></tr>
+<tr><td>1005</td><td>REJECTED_COOLDOWN</td></tr>
+<tr><td>1006</td><td>REJECTED_LOCKOUT</td></tr>
+<tr><td>1007</td><td>REJECTED_SENSOR_ERROR</td></tr>
+<tr><td>1008</td><td>REJECTED_PUMP_BUSY</td></tr>
+<tr><td>1009</td><td>REJECTED_TIMEOUT</td></tr>
+<tr><td>1010</td><td>REJECTED_QUEUE_FULL</td></tr>
+<tr><td>1011</td><td>ACTUATION_ERROR</td></tr>
+</table></div>
+
+<h2>6. MCP 2026-07-28과의 관계 / Conformance scope</h2>
+<p>이 확장을 쓰는 참조 구현(ESP32, 4개 FreeRTOS agent)은 MCP 2026-07-28의 stateless Streamable HTTP, 표준 헤더(SEP-2243), <code>server/discover</code>(SEP-2575), 확장 공개(SEP-2133)를 따르는 <strong>제한된 부분 구현</strong>입니다. 캐시 필드(<code>ttlMs</code>, <code>cacheScope</code>), <code>resultType</code>, HTTP 상태 코드 세분화, <code>Origin</code> 검증은 구현하지 않았습니다.</p>
+
+<h2>7. 알려진 한계 / Known limitations</h2>
+<ul>
+<li>2단계 승인은 관수 1건당 HTTP 왕복을 1회 늘립니다. 네트워크 지연이 TTL을 넘으면 정상 명령도 만료로 거부될 수 있습니다(안전성과 가용성의 트레이드오프).</li>
+<li>인증·암호화(토큰 서명, TLS)는 범위 밖입니다. 폐쇄 LAN 시험 환경을 전제로 합니다.</li>
+<li>정책값(TTL, freshness, cooldown)은 연구용 값이며 실제 농업 현장에 맞춘 값이 아닙니다.</li>
+</ul>
+
+<h2>8. 관련 연구 / Related work</h2>
+<ul>
+<li>DCP — Device Context Protocol (arXiv:2605.26159): 자원 제약 장치용 별도 프로토콜, 호스트 측 검증</li>
+<li>LAP — An Agent-to-Instrument Protocol (arXiv:2606.03755): 파라미터 결합 1회용 운영자 토큰 설계</li>
+<li>MCIP (arXiv:2505.14590): LLM tool-call 정보흐름 관점의 MCP 안전</li>
+</ul>
+
+<footer>io.github.ykedutech2004/actuator-safety · v0.1 draft · 2026-09-30</footer>
+</main>
+</body>
+</html>
